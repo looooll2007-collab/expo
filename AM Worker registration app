@@ -1,0 +1,463 @@
+// App.js
+// تطبيق React Native بسيط لتسجيل العمالة اليومية مع حساب أجر السهرات يدويًا
+// العمل مع Expo مُفضّل: https://expo.dev
+
+import React, { useState, useEffect } from 'react';
+import {
+  SafeAreaView,
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  FlatList,
+  StyleSheet,
+  Alert,
+  ScrollView,
+  I18nManager,
+} from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// Force RTL layout for Arabic
+I18nManager.allowRTL(true);
+I18nManager.forceRTL(true);
+
+export default function App() {
+  const [screen, setScreen] = useState('home'); // 'home' | 'addDay' | 'dayReport' | 'editDay'
+  const [days, setDays] = useState([]);
+  const [currentDate, setCurrentDate] = useState('');
+  const [selectedDayIndex, setSelectedDayIndex] = useState(null);
+
+  // Worker form states
+  const [wName, setWName] = useState('');
+  const [wRole, setWRole] = useState('');
+  const [wWage, setWWage] = useState('');
+  const [wPresent, setWPresent] = useState(true);
+  const [wOvertimeHours, setWOvertimeHours] = useState('0');
+  const [wOvertimeRate, setWOvertimeRate] = useState('0');
+
+  useEffect(() => {
+    loadDays();
+  }, []);
+
+  const STORAGE_KEY = '@daily_workers_days_v1';
+
+  const loadDays = async () => {
+    try {
+      const json = await AsyncStorage.getItem(STORAGE_KEY);
+      if (json) setDays(JSON.parse(json));
+    } catch (e) {
+      Alert.alert('خطأ', 'فشل تحميل البيانات');
+    }
+  };
+
+  const saveDays = async (newDays) => {
+    try {
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(newDays));
+      setDays(newDays);
+    } catch (e) {
+      Alert.alert('خطأ', 'فشل حفظ البيانات');
+    }
+  };
+
+  const addDay = () => {
+    if (!currentDate.trim()) {
+      Alert.alert('تنبيه', 'من فضلك أدخل التاريخ');
+      return;
+    }
+    const exists = days.find((d) => d.date === currentDate.trim());
+    if (exists) {
+      Alert.alert('تنبيه', 'اليوم مسجل مسبقًا');
+      return;
+    }
+    const newDay = { date: currentDate.trim(), workers: [] };
+    const newDays = [newDay, ...days];
+    saveDays(newDays);
+    setCurrentDate('');
+    setScreen('home');
+  };
+
+  const addWorkerToDay = (index) => {
+    if (!wName.trim()) return Alert.alert('تنبيه', 'أدخل اسم العامل');
+    if (!wWage.trim() || isNaN(Number(wWage)))
+      return Alert.alert('تنبيه', 'أدخل أجر يومي صالح');
+    if (isNaN(Number(wOvertimeHours)))
+      return Alert.alert('تنبيه', 'ساعات السهرة يجب أن تكون رقم');
+    if (isNaN(Number(wOvertimeRate)))
+      return Alert.alert('تنبيه', 'سعر الساعة يجب أن يكون رقم');
+
+    const worker = {
+      id: Date.now().toString(),
+      name: wName.trim(),
+      role: wRole.trim(),
+      wage: Number(wWage),
+      present: !!wPresent,
+      overtimeHours: Number(wOvertimeHours),
+      overtimeRate: Number(wOvertimeRate),
+    };
+
+    const newDays = [...days];
+    newDays[index].workers.push(worker);
+    saveDays(newDays);
+
+    setWName('');
+    setWRole('');
+    setWWage('');
+    setWPresent(true);
+    setWOvertimeHours('0');
+    setWOvertimeRate('0');
+  };
+
+  const removeWorker = (dayIndex, workerId) => {
+    const newDays = [...days];
+    newDays[dayIndex].workers = newDays[dayIndex].workers.filter(
+      (w) => w.id !== workerId
+    );
+    saveDays(newDays);
+  };
+
+  const toggleAttendance = (dayIndex, workerId) => {
+    const newDays = [...days];
+    const w = newDays[dayIndex].workers.find((x) => x.id === workerId);
+    if (w) {
+      w.present = !w.present;
+      saveDays(newDays);
+    }
+  };
+
+  const deleteDay = (index) => {
+    Alert.alert('تأكيد', 'هل تريد حذف هذا اليوم؟', [
+      { text: 'لا' },
+      {
+        text: 'نعم',
+        onPress: () => {
+          const newDays = [...days];
+          newDays.splice(index, 1);
+          saveDays(newDays);
+        },
+      },
+    ]);
+  };
+
+  const calculateWorkerTotal = (w) => {
+    if (!w.present) return 0;
+    return w.wage + w.overtimeHours * w.overtimeRate;
+  };
+
+  const calculateDaySummary = (day) => {
+    const presentWorkers = day.workers.filter((w) => w.present);
+    const count = presentWorkers.length;
+    const total = presentWorkers.reduce(
+      (s, w) => s + calculateWorkerTotal(w),
+      0
+    );
+    const overtimeTotal = presentWorkers.reduce(
+      (s, w) => s + w.overtimeHours * w.overtimeRate,
+      0
+    );
+    return { count, total, overtimeTotal };
+  };
+
+  // 🏠 الشاشة الرئيسية
+  const Home = () => {
+    return (
+      <SafeAreaView style={styles.container}>
+        <Text style={styles.title}>تسجيل العمالة اليومية</Text>
+
+        <TouchableOpacity
+          style={styles.button}
+          onPress={() => setScreen('addDay')}>
+          <Text style={styles.buttonText}>إضافة يوم جديد</Text>
+        </TouchableOpacity>
+
+        {days.length === 0 ? (
+          <View style={styles.empty}>
+            <Text>لا توجد بيانات مسجلة بعد</Text>
+          </View>
+        ) : (
+          <FlatList
+            data={days}
+            keyExtractor={(item) => item.date}
+            renderItem={({ item, index }) => {
+              const summary = calculateDaySummary(item);
+              return (
+                <View style={styles.dayCard}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.dayDate}>{item.date}</Text>
+                    <Text>
+                      العمال الحاضرون: {summary.count} — إجمالي الأجرة:{' '}
+                      {summary.total} ج.م
+                    </Text>
+                  </View>
+                  <View style={styles.rowButtons}>
+                    <TouchableOpacity
+                      style={styles.smallBtn}
+                      onPress={() => {
+                        setSelectedDayIndex(index);
+                        setScreen('dayReport');
+                      }}>
+                      <Text>عرض</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.smallBtn}
+                      onPress={() => {
+                        setSelectedDayIndex(index);
+                        setScreen('editDay');
+                      }}>
+                      <Text>إضافة عامل</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.smallBtn, { backgroundColor: '#f88' }]}
+                      onPress={() => deleteDay(index)}>
+                      <Text>حذف</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              );
+            }}
+          />
+        )}
+      </SafeAreaView>
+    );
+  };
+
+  const AddDay = () => {
+    return (
+      <SafeAreaView style={styles.container}>
+        <Text style={styles.title}>إضافة يوم جديد</Text>
+        <Text style={styles.label}>التاريخ (مثال: 2025-10-19)</Text>
+        <TextInput
+          style={styles.input}
+          value={currentDate}
+          onChangeText={setCurrentDate}
+          placeholder="yyyy-mm-dd"
+        />
+        <TouchableOpacity style={styles.button} onPress={addDay}>
+          <Text style={styles.buttonText}>حفظ اليوم</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.button, { backgroundColor: '#ddd' }]}
+          onPress={() => setScreen('home')}>
+          <Text>رجوع</Text>
+        </TouchableOpacity>
+      </SafeAreaView>
+    );
+  };
+
+  const EditDay = ({ dayIndex }) => {
+    const day = days[dayIndex];
+    if (!day) return null;
+    return (
+      <SafeAreaView style={styles.container}>
+        <Text style={styles.title}>إضافة عامل ليوم {day.date}</Text>
+        <ScrollView style={{ width: '100%' }}>
+          <Text style={styles.label}>اسم العامل</Text>
+          <TextInput
+            style={styles.input}
+            value={wName}
+            onChangeText={setWName}
+            placeholder="مثال: محمد علي"
+          />
+          <Text style={styles.label}>المهنة / القسم</Text>
+          <TextInput
+            style={styles.input}
+            value={wRole}
+            onChangeText={setWRole}
+            placeholder="مثال: نجار"
+          />
+          <Text style={styles.label}>الأجرة اليومية (ج.م)</Text>
+          <TextInput
+            style={styles.input}
+            value={wWage}
+            onChangeText={setWWage}
+            keyboardType="numeric"
+            placeholder="مثال: 200"
+          />
+          <Text style={styles.label}>الحضور</Text>
+          <View
+            style={{
+              flexDirection: 'row',
+              justifyContent: 'space-around',
+              marginBottom: 10,
+            }}>
+            <TouchableOpacity
+              style={[styles.smallBtn, wPresent ? { backgroundColor: '#9f9' } : null]}
+              onPress={() => setWPresent(true)}>
+              <Text>حاضر</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.smallBtn, !wPresent ? { backgroundColor: '#f99' } : null]}
+              onPress={() => setWPresent(false)}>
+              <Text>غائب</Text>
+            </TouchableOpacity>
+          </View>
+
+          <Text style={styles.label}>ساعات السهرة (عدد الساعات)</Text>
+          <TextInput
+            style={styles.input}
+            value={wOvertimeHours}
+            onChangeText={setWOvertimeHours}
+            keyboardType="numeric"
+            placeholder="مثال: 2"
+          />
+          <Text style={styles.label}>سعر ساعة السهرة (ج.م) — ادخله يدويًا</Text>
+          <TextInput
+            style={styles.input}
+            value={wOvertimeRate}
+            onChangeText={setWOvertimeRate}
+            keyboardType="numeric"
+            placeholder="مثال: 50"
+          />
+
+          <TouchableOpacity
+            style={styles.button}
+            onPress={() => addWorkerToDay(dayIndex)}>
+            <Text style={styles.buttonText}>إضافة العامل</Text>
+          </TouchableOpacity>
+
+          <Text style={[styles.title, { fontSize: 18, marginTop: 10 }]}>
+            قائمة العمال لهذا اليوم
+          </Text>
+
+          {day.workers.length === 0 ? (
+            <Text>لا يوجد عمال بعد</Text>
+          ) : (
+            day.workers.map((w) => (
+              <View key={w.id} style={styles.workerCard}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontWeight: 'bold' }}>{w.name}</Text>
+                  <Text>{w.role} — أجر يومي: {w.wage} ج.م</Text>
+                  <Text>الحضور: {w.present ? 'حاضر' : 'غائب'}</Text>
+                  <Text>ساعات سهرة: {w.overtimeHours} — سعر الساعة: {w.overtimeRate} ج.م</Text>
+                  <Text>المجموع: {calculateWorkerTotal(w)} ج.م</Text>
+                </View>
+                <View style={{ justifyContent: 'space-between' }}>
+                  <TouchableOpacity
+                    style={styles.smallBtn}
+                    onPress={() => toggleAttendance(dayIndex, w.id)}>
+                    <Text>تبديل حضور</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.smallBtn, { backgroundColor: '#f88' }]}
+                    onPress={() => removeWorker(dayIndex, w.id)}>
+                    <Text>حذف</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ))
+          )}
+
+          <TouchableOpacity
+            style={[styles.button, { marginTop: 10, backgroundColor: '#ddd' }]}
+            onPress={() => setScreen('home')}>
+            <Text>رجوع للرئيسية</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </SafeAreaView>
+    );
+  };
+
+  const DayReport = ({ dayIndex }) => {
+    const day = days[dayIndex];
+    if (!day) return null;
+    const summary = calculateDaySummary(day);
+    return (
+      <SafeAreaView style={styles.container}>
+        <Text style={styles.title}>تقرير يوم {day.date}</Text>
+        <Text>عدد العمال الحاضرين: {summary.count}</Text>
+        <Text>إجمالي أجر عادي + سهرة: {summary.total} ج.م</Text>
+        <Text>إجمالي أجر السهرات: {summary.overtimeTotal} ج.م</Text>
+
+        <Text style={[styles.title, { fontSize: 18, marginTop: 10 }]}>
+          تفاصيل العمال
+        </Text>
+        <ScrollView style={{ width: '100%' }}>
+          {day.workers.length === 0 ? (
+            <Text>لا يوجد بيانات</Text>
+          ) : (
+            day.workers.map((w) => (
+              <View key={w.id} style={styles.workerCard}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontWeight: 'bold' }}>{w.name}</Text>
+                  <Text>حاضر: {w.present ? 'نعم' : 'لا'}</Text>
+                  <Text>أجر يومي: {w.wage} ج.م</Text>
+                  <Text>
+                    سهرة: {w.overtimeHours} × {w.overtimeRate} ={' '}
+                    {w.overtimeHours * w.overtimeRate} ج.م
+                  </Text>
+                  <Text>المجموع: {calculateWorkerTotal(w)} ج.م</Text>
+                </View>
+              </View>
+            ))
+          )}
+        </ScrollView>
+
+        <TouchableOpacity
+          style={[styles.button, { marginTop: 10, backgroundColor: '#ddd' }]}
+          onPress={() => setScreen('home')}>
+          <Text>رجوع للرئيسية</Text>
+        </TouchableOpacity>
+      </SafeAreaView>
+    );
+  };
+
+  return (
+    <View style={{ flex: 1 }}>
+      {screen === 'home' && <Home />}
+      {screen === 'addDay' && <AddDay />}
+      {screen === 'editDay' && <EditDay dayIndex={selectedDayIndex} />}
+      {screen === 'dayReport' && <DayReport dayIndex={selectedDayIndex} />}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    alignItems: 'center',
+    padding: 16,
+    backgroundColor: '#fff',
+  },
+  title: { fontSize: 22, fontWeight: 'bold', marginBottom: 10 },
+  input: {
+    width: '100%',
+    borderWidth: 1,
+    borderColor: '#ccc',
+    borderRadius: 8,
+    padding: 8,
+    marginBottom: 10,
+    textAlign: 'right',
+  },
+  label: { alignSelf: 'flex-end', marginBottom: 4 },
+  button: {
+    backgroundColor: '#2e86de',
+    padding: 12,
+    borderRadius: 8,
+    width: '100%',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  buttonText: { color: '#fff', fontWeight: 'bold' },
+  empty: { marginTop: 20, alignItems: 'center' },
+  dayCard: {
+    width: '100%',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  dayDate: { fontWeight: 'bold', fontSize: 16, marginBottom: 4 },
+  rowButtons: { justifyContent: 'space-between', alignItems: 'center' },
+  smallBtn: { backgroundColor: '#eee', padding: 6, borderRadius: 6, marginBottom: 6 },
+  workerCard: {
+    width: '100%',
+    borderWidth: 1,
+    borderColor: '#eee',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 8,
+    flexDirection: 'row',
+  },
+});
